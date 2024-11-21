@@ -1,0 +1,21 @@
+[package]
+name = "typst-flower"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+futures-io = "^0.3.31"
+futures-util = "0.3.31"
+mobc = "0.8.5"
+mobc-redis = "0.8.2"
+operational-transform = "0.6.1"
+pretty_env_logger = "0.5.0"
+redis = { version = "0.27.5", features = ["tokio-comp", "aio", "connection-manager"] }
+serde = { version = "1.0.214", features = ["derive"] }
+serde_json = "1.0.132"
+tokio = { version = "1.41.1", features = ["macros", "rt", "rt-multi-thread", "sync"] }
+tokio-stream = "0.1.16"
+warp = "0.3.7"
+
+minio = {git="https://github.com/minio/minio-rs.git"}
+dotenvy = "0.15.7"
