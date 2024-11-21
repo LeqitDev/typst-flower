@@ -36,7 +36,7 @@ struct RawOperation {
 }
 
 #[allow(clippy::identity_op)]
-const EXP_TIME: i64 = 1 * 60 * 1; // 30 minutes
+const EXP_TIME: i64 = 1 * 60 * 30; // 30 minutes
 
 #[tokio::main]
 async fn main() {
