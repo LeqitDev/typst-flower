@@ -2,11 +2,6 @@ use std::{env, sync::Arc};
 
 use dotenvy::dotenv;
 use minio::s3::{creds::StaticProvider, ClientBuilder};
-use redis::{
-    aio::{ConnectionManager, ConnectionManagerConfig},
-    AsyncCommands, Client,
-};
-use tokio::sync::mpsc;
 use users::{structs::ServerState, Project};
 use warp::{reject::Rejection, reply::Reply, Filter};
 
@@ -34,24 +29,7 @@ async fn main() {
 
     let state = warp::any().map(move || state.clone());
 
-    let redis_client = Client::open("redis://127.0.0.1:6379/?protocol=resp3").unwrap();
-    let (tx, mut rx) = mpsc::unbounded_channel();
-    let config = ConnectionManagerConfig::new().set_push_sender(tx);
-    let mut pool = ConnectionManager::new_with_config(redis_client, config)
-        .await
-        .unwrap();
-    redis::cmd("CONFIG")
-        .arg("SET")
-        .arg("notify-keyspace-events")
-        .arg("Ex")
-        .exec_async(&mut pool)
-        .await
-        .unwrap();
-    pool.subscribe("__keyevent@0__:expired").await.unwrap();
-
-    let mut event_pool = pool.clone();
-    let event_minio = minio_client.clone();
-    tokio::task::spawn(async move {
+    /* tokio::task::spawn(async move {
         while let Some(message) = rx.recv().await {
             let id = match &message.data[1] {
                 redis::Value::BulkString(vec) => String::from_utf8(vec.to_vec()).unwrap(),
@@ -78,9 +56,7 @@ async fn main() {
                 }
             }
         }
-    });
-
-    let warp_pool = warp::any().map(move || pool.clone());
+    }); */
 
     let warp_minio = warp::any().map(move || minio_client.clone());
 
@@ -88,7 +64,6 @@ async fn main() {
         // The `ws()` filter will prepare the Websocket handshake.
         .and(warp::ws())
         .and(state.clone())
-        .and(warp_pool)
         .and(warp_minio)
         .and_then(socket_handler);
 
@@ -99,7 +74,6 @@ async fn socket_handler(
     id: String,
     ws: warp::ws::Ws,
     state: ServerState,
-    pool: ConnectionManager,
     minio: minio::s3::Client,
 ) -> Result<impl Reply, Rejection> {
     let project = {
@@ -113,7 +87,7 @@ async fn socket_handler(
         }
     };
 
-    Ok(ws.on_upgrade(|socket| async move { project.user_connected(socket, pool, minio).await }))
+    Ok(ws.on_upgrade(|socket| async move { project.user_connected(socket, id, minio).await }))
 }
 
 #[cfg(test)]

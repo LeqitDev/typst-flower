@@ -17,6 +17,7 @@ pub struct RawOperation {
     pub text: String,
     pub range_offset: u64,
     pub range_length: u64,
+    pub rest_length: u64,
 }
 
 impl RawOperation {
@@ -34,29 +35,31 @@ impl RawOperation {
 }
 
 impl RawOperation {
-    pub fn into_user_op(&self, client_id: String, revision: Revision) -> UserOperation {
+    pub fn into_user_op(self, client_id: String, revision: Revision) -> UserOperation {
         UserOperation {
             revision,
             client_id,
-            operation: self.clone().into(),
+            operation: self.into(),
         }
     }
 }
 
-impl Into<OperationSeq> for RawOperation {
-    fn into(self) -> OperationSeq {
+impl From<RawOperation> for OperationSeq {
+    fn from(val: RawOperation) -> Self {
         let mut operation_seq = OperationSeq::default();
 
-        operation_seq.retain(self.range_offset);
+        operation_seq.retain(val.range_offset);
 
-        if self.is_insert() {
-            operation_seq.insert(self.text.as_str());
-        } else if self.is_delete() {
-            operation_seq.delete(self.range_length);
-        } else if self.is_replace() {
-            operation_seq.delete(self.range_length);
-            operation_seq.insert(self.text.as_str());
+        if val.is_insert() {
+            operation_seq.insert(val.text.as_str());
+        } else if val.is_delete() {
+            operation_seq.delete(val.range_length);
+        } else if val.is_replace() {
+            operation_seq.delete(val.range_length);
+            operation_seq.insert(val.text.as_str());
         }
+
+        operation_seq.retain(val.rest_length);
 
         operation_seq
     }
@@ -77,10 +80,9 @@ impl Add<u64> for Revision {
 pub const EXP_TIME: i64 = 1 * 60 * 30; // 30 minutes
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(tag = "type", rename_all_fields = "camelCase")]
 pub enum ActionType {
-    Init {
-        project_id: String,
-    },
+    Init,
     CreateFile {
         path: String,
         initial_content: Option<String>,
@@ -108,6 +110,7 @@ pub enum ActionType {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ClientRequest {
     pub revision: Revision,
     pub client_id: String,
@@ -136,9 +139,10 @@ impl Entry {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(tag = "type", rename_all_fields = "camelCase")]
 pub enum PayloadType {
     Error { message: String },
-    InitOk { first_file: Entry },
+    InitOk { files: Vec<Entry> },
     CreateFileOk { path: String },
     DeleteFileOk { path: String },
     RenameFileOk { old_path: String, new_path: String },
@@ -153,8 +157,8 @@ impl PayloadType {
         PayloadType::Error { message }
     }
 
-    pub fn init_ok(first_file: Entry) -> Self {
-        PayloadType::InitOk { first_file }
+    pub fn init_ok(files: Vec<Entry>) -> Self {
+        PayloadType::InitOk { files }
     }
 
     pub fn create_file_ok(path: String) -> Self {
@@ -187,6 +191,7 @@ impl PayloadType {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(tag = "type", content = "number")]
 pub enum Revision {
     None,
     Some(u64),
@@ -202,6 +207,7 @@ impl Revision {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ServerResponse {
     pub revision: Revision,
     pub payload: PayloadType,
@@ -241,16 +247,27 @@ impl Document {
     pub async fn apply_operation(&self, mut operation: UserOperation) -> Result<(), String> {
         let mut new_text = self.state.read().await.text.clone();
 
+        println!("text before: {}", new_text);
+
         let len = self.state.read().await.operations.len();
         if operation.revision.inner() > len as u64 {
             return Err("Invalid revision".to_string());
         }
 
+        println!("operation rev: {:?}", operation.revision.inner());
         for op in &self.state.read().await.operations[operation.revision.inner() as usize..] {
+            println!("op: {:?}", op.operation);
             operation.operation = operation
                 .operation
                 .transform(&op.operation)
-                .map_err(|e| e.to_string())?
+                .map_err(|e| {
+                    format!(
+                        "On transform {:?}. Op: {:?}, transformed with {:?}",
+                        e.to_string(),
+                        operation.operation,
+                        op.operation
+                    )
+                })?
                 .0;
         }
         if operation.operation.target_len() > 100000 {
@@ -260,10 +277,15 @@ impl Document {
             ));
         }
 
-        new_text = operation
-            .operation
-            .apply(new_text.as_str())
-            .map_err(|e| e.to_string())?;
+        new_text = operation.operation.apply(new_text.as_str()).map_err(|e| {
+            format!(
+                "On apply {:?}. Op: {:?}.",
+                e.to_string(),
+                operation.operation
+            )
+        })?;
+
+        println!("new_text: {}", new_text);
 
         self.state.write().await.text = new_text;
         self.state.write().await.operations.push(operation);

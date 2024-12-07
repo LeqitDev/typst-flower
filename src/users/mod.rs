@@ -28,6 +28,7 @@ fn get_project_path(user_id: &String, project_id: &String) -> String {
 }
 
 fn send_response(tx: &mpsc::UnboundedSender<Message>, response: ServerResponse) {
+    println!("sending response: {:?}", response);
     tx.send(Message::text(serde_json::to_string(&response).unwrap()))
         .unwrap();
 }
@@ -53,26 +54,27 @@ impl Project {
         &self,
         path: &String,
         minio: &minio::s3::Client,
-        bucket: &String,
+        bucket: &str,
     ) -> Arc<Document> {
-        let doc = if let Some(entry) = self.state.read().await.get(path) {
+        let binding = self.state.read().await;
+        let has_doc = binding.get(path);
+        if let Some(entry) = has_doc {
             entry.clone()
         } else {
+            drop(binding);
             let content = get_object(minio, bucket, path).await.unwrap();
 
             let doc = Arc::new(Document::new(content));
             self.state.write().await.insert(path.clone(), doc.clone());
 
             doc
-        };
-
-        doc
+        }
     }
 
     pub async fn user_connected(
         &self,
         ws: WebSocket,
-        mut pool: ConnectionManager,
+        project_id: String,
         minio: minio::s3::Client,
     ) {
         let my_id = self.id_count.fetch_add(1, Ordering::Relaxed);
@@ -111,10 +113,11 @@ impl Project {
             };
 
             if msg.is_text() || msg.is_binary() {
+                println!("received message: ''{:?}''", msg);
                 let request = ClientRequest::from(msg);
 
                 match request.action {
-                    structs::ActionType::Init { project_id } => {
+                    structs::ActionType::Init => {
                         project_path = Some(get_project_path(&request.client_id, &project_id));
 
                         let project_files =
@@ -133,70 +136,24 @@ impl Project {
                                     ),
                                 );
                             } else {
-                                let has_main = project_files
-                                    .iter()
-                                    .find(|entry| entry.name.ends_with("files/main.typ"));
-                                if let Some(main) = has_main {
-                                    // Main file exists in root of project
-                                    let main_entry =
-                                        self.get_file_entry(&main.name, &minio, &bucket).await;
+                                let mut entrys = Vec::new();
 
-                                    send_response(
-                                        &tx,
-                                        ServerResponse::new(
-                                            Revision::Some(
-                                                main_entry.state.read().await.operations.len()
-                                                    as u64,
-                                            ),
-                                            structs::PayloadType::init_ok(Entry::new(
-                                                main.name.clone(),
-                                                main_entry.state.read().await.text.clone(),
-                                            )),
-                                        ),
-                                    );
-                                } else {
-                                    let has_lib = project_files
-                                        .iter()
-                                        .find(|entry| entry.name.ends_with("files/lib.typ"));
-                                    if let Some(lib) = has_lib {
-                                        // Lib file exists in root of project (Improvement: Check for the entrypoint in the toml)
-                                        let lib_entry =
-                                            self.get_file_entry(&lib.name, &minio, &bucket).await;
-
-                                        send_response(
-                                            &tx,
-                                            ServerResponse::new(
-                                                Revision::Some(
-                                                    lib_entry.state.read().await.operations.len()
-                                                        as u64,
-                                                ),
-                                                structs::PayloadType::init_ok(Entry::new(
-                                                    lib.name.clone(),
-                                                    lib_entry.state.read().await.text.clone(),
-                                                )),
-                                            ),
-                                        );
-                                    } else {
-                                        let first_file = project_files.first().unwrap(); // just get the first file in project
-                                        let first_entry = self
-                                            .get_file_entry(&first_file.name, &minio, &bucket)
-                                            .await;
-
-                                        send_response(
-                                            &tx,
-                                            ServerResponse::new(
-                                                Revision::Some(
-                                                    first_entry.state.read().await.operations.len()
-                                                        as u64,
-                                                ),
-                                                structs::PayloadType::init_ok(Entry::new(
-                                                    first_file.name.clone(),
-                                                    first_entry.state.read().await.text.clone(),
-                                                )),
-                                            ),
-                                        );
-                                    }
+                                for file in project_files {
+                                    let entry =
+                                        self.get_file_entry(&file.name, &minio, &bucket).await;
+                                    entrys.push(Entry::new(
+                                        file.name,
+                                        entry.state.read().await.text.clone(),
+                                    ));
                                 }
+
+                                send_response(
+                                    &tx,
+                                    ServerResponse::new(
+                                        structs::Revision::None,
+                                        structs::PayloadType::init_ok(entrys),
+                                    ),
+                                );
                             }
                         } else {
                             send_response(
@@ -213,7 +170,7 @@ impl Project {
                     structs::ActionType::CreateFile {
                         path,
                         initial_content,
-                    } => todo!(),
+                    } => todo!(), // notify all users about the new file
                     structs::ActionType::DeleteFile { path } => todo!(),
                     structs::ActionType::RenameFile { old_path, new_path } => todo!(),
                     structs::ActionType::CreateDirectory { path } => todo!(),
@@ -224,24 +181,29 @@ impl Project {
                             .clone()
                             .into_user_op(request.client_id, request.revision);
 
-                        if entry.apply_operation(user_op).await.is_ok() {
-                            send_response(
-                                &tx,
-                                ServerResponse::new(
-                                    Revision::Some(entry.state.read().await.operations.len() as u64),
-                                    structs::PayloadType::edit_file_ok(path),
-                                ),
-                            );
-                        } else {
-                            send_response(
-                                &tx,
-                                ServerResponse::new(
-                                    structs::Revision::None,
-                                    structs::PayloadType::Error {
-                                        message: "Operation failed!".to_string(),
-                                    },
-                                ),
-                            );
+                        match entry.apply_operation(user_op).await {
+                            Ok(_) => {
+                                send_response(
+                                    &tx,
+                                    ServerResponse::new(
+                                        Revision::Some(
+                                            entry.state.read().await.operations.len() as u64
+                                        ),
+                                        structs::PayloadType::edit_file_ok(path),
+                                    ),
+                                );
+                            }
+                            Err(e) => {
+                                send_response(
+                                    &tx,
+                                    ServerResponse::new(
+                                        structs::Revision::None,
+                                        structs::PayloadType::Error {
+                                            message: e.to_string(),
+                                        },
+                                    ),
+                                );
+                            }
                         }
                     }
                     structs::ActionType::OpenFile { path } => {
