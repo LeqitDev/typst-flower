@@ -60,14 +60,14 @@ async fn main() {
 
     let warp_minio = warp::any().map(move || minio_client.clone());
 
-    let routes = warp::path!("users" / String)
+    let user = warp::path!("users" / String)
         // The `ws()` filter will prepare the Websocket handshake.
         .and(warp::ws())
         .and(state.clone())
         .and(warp_minio)
         .and_then(socket_handler);
 
-    warp::serve(routes).run(([127, 0, 0, 1], 3030)).await;
+    warp::serve(user).run(([127, 0, 0, 1], 3030)).await;
 }
 
 async fn socket_handler(
