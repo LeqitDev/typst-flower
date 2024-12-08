@@ -144,6 +144,9 @@ impl Project {
                                     entrys.push(Entry::new(
                                         file.name,
                                         entry.state.read().await.text.clone(),
+                                        structs::Revision::Some(
+                                            entry.state.read().await.operations.len() as u64,
+                                        ),
                                     ));
                                 }
 
@@ -218,6 +221,9 @@ impl Project {
                                 structs::PayloadType::open_file_ok(Entry::new(
                                     path,
                                     entry.state.read().await.text.clone(),
+                                    structs::Revision::Some(
+                                        entry.state.read().await.operations.len() as u64,
+                                    ),
                                 )),
                             ),
                         );

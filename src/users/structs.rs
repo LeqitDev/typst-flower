@@ -130,11 +130,16 @@ impl From<Message> for ClientRequest {
 pub struct Entry {
     pub path: String,
     pub content: String,
+    pub revision: Revision,
 }
 
 impl Entry {
-    pub fn new(path: String, content: String) -> Self {
-        Self { path, content }
+    pub fn new(path: String, content: String, revision: Revision) -> Self {
+        Self {
+            path,
+            content,
+            revision,
+        }
     }
 }
 
@@ -247,7 +252,10 @@ impl Document {
     pub async fn apply_operation(&self, mut operation: UserOperation) -> Result<(), String> {
         let mut new_text = self.state.read().await.text.clone();
 
-        println!("text before: {}", new_text);
+        /* println!(
+            "text before: {}",
+            new_text.replace('\n', "\\n").replace('\r', "\\r")
+        ); */
 
         let len = self.state.read().await.operations.len();
         if operation.revision.inner() > len as u64 {
@@ -279,13 +287,17 @@ impl Document {
 
         new_text = operation.operation.apply(new_text.as_str()).map_err(|e| {
             format!(
-                "On apply {:?}. Op: {:?}.",
+                "On apply {:?}. Op: {:?}, String length: {}",
                 e.to_string(),
-                operation.operation
+                operation.operation,
+                new_text.len()
             )
         })?;
 
-        println!("new_text: {}", new_text);
+        println!(
+            "new_text: {}\n",
+            new_text.replace('\n', "\\n").replace('\r', "\\r")
+        );
 
         self.state.write().await.text = new_text;
         self.state.write().await.operations.push(operation);
