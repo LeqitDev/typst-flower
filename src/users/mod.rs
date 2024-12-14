@@ -14,7 +14,10 @@ use mem_db::{CachedFile, RedisEntry};
 use operational_transform::OperationSeq;
 use redis::aio::ConnectionManager;
 use structs::{ClientRequest, Document, Entry, Revision, ServerResponse};
-use tokio::sync::{mpsc, RwLock};
+use tokio::{
+    sync::{mpsc, RwLock},
+    time::Instant,
+};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use warp::filters::ws::{Message, WebSocket};
 
@@ -37,6 +40,7 @@ pub struct Project {
     pub state: RwLock<HashMap<String, Arc<Document>>>,
     pub users: RwLock<HashMap<usize, mpsc::UnboundedSender<Message>>>,
     pub id_count: AtomicUsize,
+    pub last_access: RwLock<Instant>,
 }
 
 impl Default for Project {
@@ -45,6 +49,7 @@ impl Default for Project {
             state: RwLock::new(HashMap::new()),
             users: RwLock::new(HashMap::new()),
             id_count: AtomicUsize::new(1),
+            last_access: RwLock::new(Instant::now()),
         }
     }
 }

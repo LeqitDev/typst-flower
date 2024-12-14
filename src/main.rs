@@ -1,7 +1,12 @@
-use std::{env, sync::Arc};
+use std::{collections::HashMap, env, sync::Arc, time::Duration};
 
 use dotenvy::dotenv;
+use futures_util::StreamExt;
 use minio::s3::{creds::StaticProvider, ClientBuilder};
+use tokio::{
+    task::futures,
+    time::{self, Instant},
+};
 use users::{structs::ServerState, Project};
 use warp::{reject::Rejection, reply::Reply, Filter};
 
@@ -86,8 +91,51 @@ async fn socket_handler(
             project
         }
     };
+    {
+        let mut i = project.last_access.write().await;
+        *i = Instant::now();
+    }
+
+    tokio::task::spawn(persister(minio.clone(), project.clone()));
 
     Ok(ws.on_upgrade(|socket| async move { project.user_connected(socket, id, minio).await }))
+}
+
+async fn persister(minio: minio::s3::Client, project: Arc<Project>) {
+    let docs = project.state.read().await;
+    let mut last_revision: HashMap<String, usize> = futures_util::stream::iter(docs.iter())
+        .then(|(k, v)| async { (k.clone(), v.state.read().await.operations.len()) })
+        .collect()
+        .await;
+    drop(docs);
+
+    let bucket = env::var("MINIO_BUCKET").unwrap();
+    loop {
+        time::sleep(Duration::from_secs(3)).await;
+
+        let docs = project.state.read().await;
+        let new_las_revision: HashMap<String, usize> = futures_util::stream::iter(docs.iter())
+            .then(|(k, v)| async { (k.clone(), v.state.read().await.operations.len()) })
+            .collect()
+            .await;
+        drop(docs);
+
+        for (k, v) in new_las_revision.iter() {
+            let last = last_revision.get(k).unwrap_or(&0);
+            if last < v {
+                let docs = project.state.read().await;
+                let doc = docs.get(k).unwrap();
+                let content = doc.state.read().await.text.clone();
+                drop(docs);
+                minio
+                    .put_object_content(&bucket, k, content)
+                    .send()
+                    .await
+                    .unwrap();
+                last_revision.insert(k.clone(), *v);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
