@@ -10,9 +10,7 @@ use std::{
 
 use bucket::{get_object, get_object_list};
 use futures_util::{SinkExt, StreamExt, TryFutureExt};
-use mem_db::{CachedFile, RedisEntry};
 use operational_transform::OperationSeq;
-use redis::aio::ConnectionManager;
 use structs::{ClientRequest, Document, Entry, Revision, ServerResponse};
 use tokio::{
     sync::{mpsc, RwLock},
@@ -22,8 +20,6 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use warp::filters::ws::{Message, WebSocket};
 
 pub mod bucket;
-mod mem_db;
-pub mod mem_redis;
 pub mod structs;
 
 fn get_project_path(user_id: &String, project_id: &String) -> String {

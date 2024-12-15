@@ -14,9 +14,11 @@ mod users;
 
 #[tokio::main]
 async fn main() {
+    println!("Starting server...");
     pretty_env_logger::init();
 
     dotenv().unwrap();
+    println!("Loaded env environment");
 
     let host_env = env::var("MINIO_ENDPOINT").unwrap();
     let port_env = env::var("MINIO_PORT").unwrap();
@@ -72,7 +74,8 @@ async fn main() {
         .and(warp_minio)
         .and_then(socket_handler);
 
-    warp::serve(user).run(([127, 0, 0, 1], 3030)).await;
+    println!("Server started!");
+    warp::serve(user).run(([0, 0, 0, 0], 3030)).await;
 }
 
 async fn socket_handler(
@@ -81,6 +84,7 @@ async fn socket_handler(
     state: ServerState,
     minio: minio::s3::Client,
 ) -> Result<impl Reply, Rejection> {
+    println!("New request: {}", id);
     let project = {
         let mut projects = state.projects.lock().unwrap();
         if let Some(project) = projects.get(&id) {

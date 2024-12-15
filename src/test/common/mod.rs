@@ -2,10 +2,6 @@ use std::env;
 
 use dotenvy::dotenv;
 use minio::s3::{creds::StaticProvider, error::Error, Client, ClientBuilder};
-use redis::{
-    aio::{ConnectionManager, ConnectionManagerConfig},
-    RedisError,
-};
 use tokio::sync::mpsc;
 
 pub async fn bucket_setup() -> Result<Client, Error> {
@@ -23,11 +19,4 @@ pub async fn bucket_setup() -> Result<Client, Error> {
     ClientBuilder::new(format!("{}:{}", host_env, port_env).parse().unwrap())
         .provider(Some(Box::new(static_provider)))
         .build()
-}
-
-pub async fn redis_setup() -> Result<ConnectionManager, RedisError> {
-    let redis_client = redis::Client::open("redis://127.0.0.1:6379/?protocol=resp3").unwrap();
-    let (tx, _) = mpsc::unbounded_channel();
-    let config = ConnectionManagerConfig::new().set_push_sender(tx);
-    ConnectionManager::new_with_config(redis_client, config).await
 }
